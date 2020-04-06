@@ -1,0 +1,172 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-mysql
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-mysql
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  serviceName: {{ .Release.Name }}-mysql
+  selector:
+    matchLabels:
+      release: {{ .Release.Name }}
+      app: mysql
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        release: {{ .Release.Name }}
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:5.6
+        resources:
+          requests:
+            cpu: 50m
+            memory: 300Mi
+        env:
+        - name: MYSQL_DATABASE
+          value: wordpress
+        - name: MYSQL_PASSWORD
+          value: wordpress
+        - name: MYSQL_ROOT_PASSWORD
+          value: somewordpress
+        - name: MYSQL_USER
+          value: wordpress
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - mountPath: /var/lib/mysql
+          name: mysql
+      volumes:
+      - name: mysql
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-mysql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-mysql
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  ports:
+  - port: 3306
+    targetPort: 3306
+  selector:
+    release: {{ .Release.Name }}
+    app: mysql
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-wordpress
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-wordpress
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      release: {{ .Release.Name }}
+      app: wordpress
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        release: {{ .Release.Name }}
+        app: wordpress
+    spec:
+      containers:
+      - name: wordpress
+        image: wordpress
+        resources:
+          requests:
+            cpu: 50m
+            memory: 50Mi
+        env:
+        - name: WORDPRESS_DB_HOST
+          value: {{ .Release.Name }}-mysql:3306
+        - name: WORDPRESS_DB_PASSWORD
+          value: wordpress
+        - name: WORDPRESS_DB_USER
+          value: wordpress
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - mountPath: /var/www/html
+          name: wordpress
+      volumes:
+      - name: wordpress
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-wordpress
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-wordpress
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 80
+  selector:
+    release: {{ .Release.Name }}
+    app: wordpress
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    release: {{ .Release.Name }}
+  {{ if .Values.www_redirect }}
+  annotations:
+    traefik.frontend.redirect.regex: ^https?://www.{{ .Values.host }}/(.*)
+    traefik.frontend.redirect.replacement: https://{{ .Values.host }}/$1
+  {{ end }}
+spec:
+  rules:
+    {{ if .Values.www_redirect }}
+    - host: www.{{ .Values.host }}
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: {{ .Release.Name }}-wordpress
+              servicePort: http
+    {{ end }}
+    - host: {{ .Values.host }}
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: {{ .Release.Name }}-wordpress
+              servicePort: http
